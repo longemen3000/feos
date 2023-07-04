@@ -28,19 +28,22 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ReferencePerturbationBH 
         let eta = packing_fraction(&state.partial_density, &d);
         let eta_a = packing_fraction_a(p, &d, eta);
         let eta_b = packing_fraction_b(p, &d, eta);
+        let mbar = (&state.molefracs * &self.parameters.m).sum();
         let mut a = D::zero();
         for i in 0..n {
             for j in 0..n {
                 let d_ij = (d[i] + d[j]) * 0.5; // (d[i] * p.sigma[i] + d[j] * p.sigma[j]) * 0.5;
                 a += x[i]
                     * x[j]
+                    * p.m[i]
+                    * p.m[j]
                     * (((-eta_a[[i, j]] * 0.5 + 1.0) / (-eta_a[[i, j]] + 1.0).powi(3))
                         - ((-eta_b[[i, j]] * 0.5 + 1.0) / (-eta_b[[i, j]] + 1.0).powi(3)))
-                    * (-d_ij.powi(3) + p.sigma_ij[[i, j]].powi(3))
+                    * (-d_ij.powi(3) + p.sigma_ij[[i, j]].powi(3)) / (2.0 - 2.0 / (p.m[i] + p.m[j]))
             }
         }
 
-        -a * state.moles.sum().powi(2) * 2.0 / 3.0 / state.volume * PI
+        -a * state.moles.sum().powi(2) * 2.0 / 3.0 / state.volume * PI * mbar
     }
 }
 
@@ -60,7 +63,7 @@ mod test {
         let reduced_density = 1.0;
         let reduced_volume = moles[0] / reduced_density;
 
-        let p = test_parameters(24.0, 6.0, 1.0, 1.0);
+        let p = test_parameters(1.0, 24.0, 6.0, 1.0, 1.0);
         let pt = ReferencePerturbationBH {
             parameters: Arc::new(p),
         };

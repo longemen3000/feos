@@ -30,7 +30,8 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for HardSphereBH {
         let zeta = zeta(&state.partial_density, &d);
         let frac_1mz3 = -(zeta[3] - 1.0).recip();
         let zeta_23 = zeta_23(&state.molefracs, &d);
-        state.volume * 6.0 / std::f64::consts::PI
+        let mbar = (&state.molefracs * &self.parameters.m).sum();
+        state.volume * 6.0 / std::f64::consts::PI * mbar
             * (zeta[1] * zeta[2] * frac_1mz3 * 3.0
                 + zeta[2].powi(2) * frac_1mz3.powi(2) * zeta_23
                 + (zeta[2] * zeta_23.powi(2) - zeta[0]) * (zeta[3] * (-1.0)).ln_1p())
@@ -43,7 +44,7 @@ impl fmt::Display for HardSphereBH {
     }
 }
 
-/// Dimensionless Hard-sphere diameter according to Barker-Henderson division.
+/// Hard-sphere diameter according to Barker-Henderson division.
 /// Eq. S23 and S24.
 ///
 pub(super) fn diameter_bh<D: DualNum<f64> + Copy>(
@@ -150,9 +151,9 @@ mod test {
 
     #[test]
     fn test_bh_diameter() {
-        let p = test_parameters(12.0, 6.0, 1.0, 1.0);
+        let p = test_parameters(1.0, 12.0, 6.0, 1.0, 1.0);
         assert_eq!(diameter_bh(&p, 2.0)[0], 0.95777257352360246);
-        let p = test_parameters(24.0, 6.0, 1.0, 1.0);
+        let p = test_parameters(1.0, 24.0, 6.0, 1.0, 1.0);
         assert_eq!(diameter_bh(&p, 5.0)[0], 0.95583586434435486);
 
         // Methane

@@ -2,7 +2,7 @@
 use super::hard_sphere_bh::diameter_bh;
 use crate::uvtheory::parameters::*;
 use feos_core::{HelmholtzEnergyDual, StateHD};
-use ndarray::Array1;
+use ndarray::{Array1, Array2};
 use num_dual::DualNum;
 use std::{
     f64::consts::{FRAC_PI_3, PI},
@@ -40,6 +40,33 @@ const C2: [[f64; 2]; 3] = [
     [5.25749466058948e-05, 5.26748277148572e-04],
 ];
 
+const C_BH_CHAIN: [f64; 20] = [
+    0.03062297,
+    0.02559041,
+    0.14768986,
+    -0.11195757,
+    0.09753004,
+    0.01922224,
+    0.0336288,
+    -0.33977454,
+    -0.04639408,
+    0.05173679,
+    -0.02174187,
+    0.3025229,
+    -0.06062949,
+    -2.38534573,
+    0.04236449,
+    0.44611938,
+    0.60159647,
+    -0.38411535,
+    -0.44319917,
+    0.40444317,
+];
+
+const C_BH_CHAIN_INTRA: [f64; 4] = [-0.07897173, -0.32513486, 0.19299206, -4.11256466];
+
+const NU: f64 = 0.25;
+
 #[derive(Debug, Clone)]
 pub struct AttractivePerturbationBH {
     pub parameters: Arc<UVParameters>,
@@ -58,33 +85,186 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
         let x = &state.molefracs;
         let t = state.temperature;
         let density = state.partial_density.sum();
+        let n = x.len();
 
         // vdw effective one fluid properties
-        let (rep_x, att_x, sigma_x, weighted_sigma3_ij, epsilon_k_x, d_x) =
+        let (mbar, mbar_quadratic, rep_x, att_x, sigma_x, sigma3_x_quadratic, epsilon_k_x, d_x) =
             one_fluid_properties(p, x, t);
         let t_x = state.temperature / epsilon_k_x;
         let rho_x = density * sigma_x.powi(3);
 
-        let mean_field_constant_x = mean_field_constant(rep_x, att_x, D::one());
+        let mean_field_constant = Array2::from_shape_fn((n, n), |(i, j)| {});
 
-        let i_bh = correlation_integral_bh(rho_x, mean_field_constant_x, rep_x, att_x, d_x);
-        let delta_a1u = density / t_x * i_bh * 2.0 * PI * weighted_sigma3_ij;
+        // Not intended to work for mixtures
+        let m2 = (mbar - 2.0) / mbar;
+        let m2_squared = m2 * m2;
+        let a_intra = m2_squared * C_BH_CHAIN_INTRA[0];
+        let b_intra = m2_squared * C_BH_CHAIN_INTRA[1];
+        let c_intra = m2_squared * C_BH_CHAIN_INTRA[2];
+        let d_intra = m2_squared * C_BH_CHAIN_INTRA[3];
+
+        let mut delta_a1u_intra = D::zero();
+        let mut delta_b12u_intra = D::zero();
+        let cmie = mie_prefactor(rep_x, att_x);
+        if p.m[0] > 2.0 {
+            delta_a1u_intra =
+                rho_x * cmie * (a_intra + (b_intra * rho_x + c_intra * rho_x.powf(2.0))); // / (d_intra * rho_x + 1.0).powf(2.0);
+            let fac = mbar.recip() * C_BH_CHAIN_INTRA[3] + 1.0;
+            delta_a1u_intra *= mbar.powd(fac) / t_x;
+            delta_b12u_intra = cmie * a_intra * mbar.powd(fac) / t_x;
+        }
+
+        let mut i_bh = D::zero();
+        let mut b21_ij = Array2::zeros((n, n));
+        let mut phi_i = Array1::zeros(n);
+        for i in 0..n {
+            let xi = x[i];
+            let mi = p.m[i];
+            phi_i[i] = D::one();
+            // u_fraction_bh(
+            //     rep_x,
+            //     density * (x * &p.sigma.mapv(|s| s.powi(3))).sum(),
+            //     t_x.recip(),
+            // );
+            for j in 0..n {
+                let alpha_ij = mean_field_constant_f64(p.rep_ij[[i, j]], p.att_ij[[i, j]], 1.0);
+                let (i_bh_ij, b21_inter_ij) = correlation_integral_and_b21_bh(
+                    rho_x,
+                    alpha_ij,
+                    mbar,
+                    p.rep_ij[[i, j]],
+                    p.att_ij[[i, j]],
+                    d_x,
+                );
+                i_bh += xi
+                    * x[j]
+                    * mi
+                    * p.m[j]
+                    * p.sigma_ij[[i, j]].powi(3)
+                    * p.eps_k_ij[[i, j]]
+                    * i_bh_ij;
+                b21_ij[[i, j]] = b21_inter_ij + delta_b12u_intra;
+            }
+        }
+
+        let delta_a1u = density / state.temperature * i_bh * 2.0 * PI + delta_a1u_intra;
 
         let u_fraction_bh = u_fraction_bh(
             rep_x,
             density * (x * &p.sigma.mapv(|s| s.powi(3))).sum(),
             t_x.recip(),
         );
+        todo!()
 
-        let b21u = delta_b12u(t_x, mean_field_constant_x, weighted_sigma3_ij);
-        let b2bar = residual_virial_coefficient(p, x, state.temperature);
+        // let b21u = delta_b12u(t_x, mean_field_constant, sigma3_x_quadratic);
+        // let b2bar = residual_virial_coefficient(p, x, state.temperature);
 
-        state.moles.sum() * (delta_a1u + (-u_fraction_bh + 1.0) * (b2bar - b21u) * density)
+        // state.moles.sum() * (delta_a1u + (-u_fraction_bh + 1.0) * (b2bar - b21u) * density)
     }
 }
 
 fn delta_b12u<D: DualNum<f64>>(t_x: D, mean_field_constant_x: D, weighted_sigma3_ij: D) -> D {
     -mean_field_constant_x / t_x * 2.0 * PI * weighted_sigma3_ij
+}
+
+fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(reduced_temperature: D, m: D, sigma: D, d: D) -> D {
+    let m1 = (m - 1.0) / m;
+    let m12 = (m - 2.0) / m * m1;
+    let m123 = (m - 3.0) / m * m12 / m;
+    let c_mie = mie_prefactor(12.0, 6.0);
+    let mean_field_constant = mean_field_constant(12.0, 6.0, 1.0) / c_mie;
+    let fac = d - 1.0;
+    let m_nu = m.powf(-NU);
+
+    let c1 = [
+        4.18938869e-02,
+        1.27313440e-02,
+        1.37047712e-01,
+        -1.02530116e-01,
+        8.49115847e-01,
+        -6.70977982e-01,
+        -6.71875321e-01,
+        6.13530457e-01,
+    ];
+
+    let a1 = -mean_field_constant;
+    let a2 = m_nu * c1[1] + (m_nu * c1[5] + c1[4]) * fac + c1[0];
+    let a3 = m_nu * c1[3] + (m_nu * c1[7] + c1[6]) * fac + c1[2];
+
+    let prefac = m.powi(2) * sigma.powi(3) / reduced_temperature * 2.0 * PI;
+    let b_21 = prefac * c_mie * (m1 * a2 + m12 * a3 + a1) * m_nu;
+
+    let c2 = [
+        0.10161078,
+        -0.37280908,
+        0.54190839,
+        0.21956392,
+        -0.11806782,
+        5.19555905,
+        -6.48646822,
+        -4.72599161,
+        3.63486848,
+    ];
+
+    let a1 = c2[0];
+    let a2 = m_nu * c2[2] + (m_nu * c2[6] + c2[5]) * fac + c2[1];
+    let a3 = m_nu * c2[4] + (m_nu * c2[8] + c2[7]) * fac + c2[3];
+
+    let prefac = -m.powi(2) * sigma.powi(3) / reduced_temperature.powi(2) * PI;
+    let b_22 = prefac * c_mie * (m1 * a2 + m12 * a3 + a1);
+
+    let c3 = [
+        -0.07388219,
+        3.41316599,
+        -4.37999075,
+        -3.49348043,
+        2.84275469,
+        -21.46347169,
+        25.96844421,
+        27.40251901,
+        -25.51614374,
+    ];
+
+    let a1 = c3[0];
+    let a2 = m_nu * c3[2] + (m_nu * c3[6] + c3[5]) * fac + c3[1];
+    let a3 = m_nu * c3[4] + (m_nu * c3[8] + c3[7]) * fac + c3[3];
+
+    let prefac = m.powi(2) * sigma.powi(3) / reduced_temperature.powi(3) * (1.0 / 3.0) * PI;
+    let b_23 = prefac * c_mie * (m1 * a2 + m12 * a3 + a1);
+
+    let phi = (reduced_temperature.recip() * 0.0208820673)
+        .tanh()
+        .powf(1.51646922);
+
+    let par = [
+        286.831547,
+        -449.394468,
+        237.934383,
+        0.0,
+        0.555105093,
+        3.32488055,
+        3.08699368,
+        0.0,
+        311.346254,
+        -495.057496,
+        185.343661,
+        29.9125809,
+        -0.314196403,
+        -5.07772512,
+        17.5503540,
+        -40.2150869,
+    ];
+
+    let a0 = m1 * par[1] + m12 * par[2] + m123 * par[3] + par[0];
+    let a1 = m1 * par[5] + m12 * par[6] + m123 * par[7] + par[4];
+    let a2 = m1 * par[9] + m12 * par[10] + m123 * par[11] + par[8];
+    let a3 = m1 * par[13] + m12 * par[14] + m123 * par[15] + par[12];
+
+    let psi = -a0 * ((reduced_temperature.recip() * a1).exp() - 1.0)
+        - a2 * ((reduced_temperature.recip() * 2.0 * a3).exp() - 1.0);
+    let fac = m.powi(2) * (PI / 6.0);
+
+    b_21 + b_22 + b_23 + phi * psi * fac
 }
 
 fn residual_virial_coefficient<D: DualNum<f64> + Copy>(p: &UVParameters, x: &Array1<D>, t: D) -> D {
@@ -101,31 +281,61 @@ fn residual_virial_coefficient<D: DualNum<f64> + Copy>(p: &UVParameters, x: &Arr
     delta_b2bar
 }
 
-fn correlation_integral_bh<D: DualNum<f64> + Copy>(
+fn correlation_integral_and_b21_bh<D: DualNum<f64> + Copy>(
     rho_x: D,
-    mean_field_constant_x: D,
-    rep_x: D,
-    att_x: D,
+    mean_field_constant: f64,
+    mbar: D,
+    rep: f64,
+    att: f64,
     d_x: D,
-) -> D {
-    let c = coefficients_bh(rep_x, att_x, d_x);
-    -mean_field_constant_x
-        + mie_prefactor(rep_x, att_x) * (c[0] * rho_x + c[1] * rho_x.powi(2))
-            / (c[2] * rho_x + 1.0).powi(2)
+) -> (D, D) {
+    let [b_monomer, c_monomer, d_monomer] = coefficients_bh(rep, att, d_x);
+    let m1 = (mbar - 1.0) / mbar;
+    let m2 = (mbar - 2.0) / mbar;
+    let m2_squared = m2 * m2;
+    let m12 = m1 * m2;
+
+    let fac = d_x - 1.0;
+    let a2 = mbar.powf(-NU) * C_BH_CHAIN[1]
+        + C_BH_CHAIN[0]
+        + (mbar.powf(-NU) * C_BH_CHAIN[17] + C_BH_CHAIN[16]) * fac;
+    let a3 = mbar.powf(-NU) * C_BH_CHAIN[3]
+        + C_BH_CHAIN[2]
+        + (mbar.powf(-NU) * C_BH_CHAIN[19] + C_BH_CHAIN[18]) * fac;
+    let a = (-(m1 * a2 + m12 * a3) - mie_prefactor(rep, att).recip() * mean_field_constant)
+        * mbar.powf(-NU);
+
+    let b2 = fac * C_BH_CHAIN[5] + C_BH_CHAIN[4];
+    let b3 = fac * C_BH_CHAIN[7] * C_BH_CHAIN[6];
+    let b = b_monomer - m1 * b2 - m12 * b3;
+
+    let c2 = fac * C_BH_CHAIN[9] + C_BH_CHAIN[8];
+    let c3 = fac * C_BH_CHAIN[11] * C_BH_CHAIN[10];
+    let c = c_monomer - m1 * c2 - m12 * c3;
+
+    let d2 = fac * C_BH_CHAIN[13] + C_BH_CHAIN[12];
+    let d3 = fac * C_BH_CHAIN[15] * C_BH_CHAIN[14];
+    let d = d_monomer - m1 * d2 - m12 * d3;
+
+    let i_inter = (a + (b * rho_x + c * rho_x.powf(2.0)) / (d * rho_x + 1.0).powf(2.0))
+        * mie_prefactor(rep, att);
+    let b21_inter = a * mie_prefactor(rep, att);
+
+    (i_inter, b21_inter)
 }
 
 /// U-fraction according to Barker-Henderson division.
 /// Eq. 15
-fn u_fraction_bh<D: DualNum<f64> + Copy>(rep_x: D, reduced_density: D, one_fluid_beta: D) -> D {
-    let mut c = [D::zero(); 4];
-    let inv_rep = rep_x.recip();
+fn u_fraction_bh<D: DualNum<f64> + Copy>(m: f64, rep: f64, reduced_density: D, beta: D) -> D {
+    let mut c = [0.0; 4];
     for i in 0..4 {
-        c[i] = inv_rep * CU_BH[i][1] + CU_BH[i][0];
+        c[i] = CU_BH[i][1] + CU_BH[i][0] / rep;
     }
     let a = 1.2187;
     let b = 4.2773;
-    (activation(c[1], one_fluid_beta) * (-c[0] + 1.0) + c[0])
-        * (reduced_density.powf(a) * c[2] + reduced_density.powf(b) * c[3]).tanh()
+    todo!();
+    // (activation(c[1], beta) * (-c[0] + 1.0) + c[0])
+    //     * (reduced_density.powf(a) * c[2] + reduced_density.powf(b) * c[3]).tanh()
 }
 
 /// Activation function used for u-fraction according to Barker-Henderson division.
@@ -138,55 +348,62 @@ fn one_fluid_properties<D: DualNum<f64> + Copy>(
     p: &UVParameters,
     x: &Array1<D>,
     t: D,
-) -> (D, D, D, D, D, D) {
+) -> (D, D, D, D, D, D, D, D) {
     let d = diameter_bh(p, t);
     // &p.sigma;
     let mut epsilon_k = D::zero();
-    let mut weighted_sigma3_ij = D::zero();
+    let mut sigma3_x_quadratic = D::zero();
     let mut rep = D::zero();
     let mut att = D::zero();
     let mut d_x_3 = D::zero();
+    let mut mbar = D::zero();
+    let mut mbar_quadratic = D::zero();
     for i in 0..p.ncomponents {
         let xi = x[i];
-
-        d_x_3 += x[i] * d[i].powi(3);
+        let mi = p.m[i];
+        mbar += x[i] * mi;
+        d_x_3 += x[i] * mi * d[i].powi(3);
         for j in 0..p.ncomponents {
-            let _y = xi * x[j] * p.sigma_ij[[i, j]].powi(3);
-            weighted_sigma3_ij += _y;
+            mbar_quadratic += xi * x[j] * mi * p.m[j];
+            let _y = xi * x[j] * mi * p.m[j] * p.sigma_ij[[i, j]].powi(3);
+            sigma3_x_quadratic += _y;
             epsilon_k += _y * p.eps_k_ij[[i, j]];
 
             rep += xi * x[j] * p.rep_ij[[i, j]];
             att += xi * x[j] * p.att_ij[[i, j]];
         }
     }
-    let sigma_x = (x * &p.sigma.mapv(|v| v.powi(3))).sum().powf(1.0 / 3.0);
-    let dx = d_x_3.powf(1.0 / 3.0) / sigma_x;
+    sigma3_x_quadratic /= mbar_quadratic;
+    let sigma_x = ((x * &p.m * &p.sigma.mapv(|v| v.powi(3))).sum() / mbar).powf(1.0 / 3.0);
+    let dx = (d_x_3 / mbar).powf(1.0 / 3.0) / sigma_x;
 
     (
+        mbar,
+        mbar_quadratic,
         rep,
         att,
         sigma_x,
-        weighted_sigma3_ij,
-        epsilon_k / weighted_sigma3_ij,
+        sigma3_x_quadratic,
+        epsilon_k / sigma3_x_quadratic / mbar_quadratic,
         dx,
     )
 }
 
-fn coefficients_bh<D: DualNum<f64> + Copy>(rep: D, att: D, d: D) -> [D; 3] {
-    let c11 = d.powd(-rep + 6.0) * ((D::one() * 2.0f64).powd(-rep + 3.0) - d.powd(rep - 3.0))
+fn coefficients_bh<D: DualNum<f64> + Copy>(rep: f64, att: f64, d: D) -> [D; 3] {
+    let c11 = d.powf(-rep + 6.0) * ((D::one() * 2.0f64).powf(-rep + 3.0) - d.powf(rep - 3.0))
         / (-rep + 3.0)
         + (-d.powi(3) * 8.0 + 1.0) / 24.0;
-    let c12 = (d.powd(-rep + 6.0) * ((D::one() * 2.0f64).powd(-rep + 4.0) - d.powd(rep - 4.0))
+    let c12 = (d.powf(-rep + 6.0) * ((D::one() * 2.0f64).powf(-rep + 4.0) - d.powf(rep - 4.0))
         / (-rep + 4.0)
         + (-d.powi(2) * 4.0 + 1.0) / 8.0)
         * -0.75;
-    let c13 = (((d * 2.0).powd(-rep + 6.0) - 1.0) / (-rep + 6.0)
-        - (d * 2.0).ln() * d.powd(-att + 6.0))
+    let c13 = (((d * 2.0).powf(-rep + 6.0) - 1.0) / (-rep + 6.0)
+        - (d * 2.0).ln() * d.powf(-att + 6.0))
         / 16.0;
     let rep_inv = rep.recip();
     let c1 = (c11 + c12 + c13) * FRAC_PI_3 * 4.0;
-    let c2 = rep_inv * C_BH[0][1] + C_BH[0][0] - (rep_inv * C_BH[0][3] + C_BH[0][2]) * (-d + 1.0);
-    let c3 = rep_inv * C_BH[1][1] + C_BH[1][0] - (rep_inv * C_BH[1][3] + C_BH[1][2]) * (-d + 1.0);
+    let c2 = -(-d + 1.0) * (rep_inv * C_BH[0][3] + C_BH[0][2]) + rep_inv * C_BH[0][1] + C_BH[0][0];
+    let c3 = -(-d + 1.0) * (rep_inv * C_BH[1][3] + C_BH[1][2]) + rep_inv * C_BH[1][1] + C_BH[1][0];
     [c1, c2, c3]
 }
 
@@ -216,69 +433,85 @@ fn y_eff<D: DualNum<f64> + Copy>(reduced_temperature: D, rep: f64, att: f64) -> 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::uvtheory::parameters::utils::methane_parameters;
+    use crate::uvtheory::parameters::utils::test_parameters;
     use approx::assert_relative_eq;
     use ndarray::arr1;
-
+    
     #[test]
-    fn test_attractive_perturbation() {
-        // m = 12, t = 4.0, rho = 1.0
+    fn test_delta_b2_lj_chain() {
         let moles = arr1(&[2.0]);
-        let reduced_temperature = 4.0;
-        let reduced_density = 1.0;
+
+        let reduced_temperature = 2.0;
+        let reduced_density = 0.6;
         let reduced_volume = moles[0] / reduced_density;
 
-        let p = methane_parameters(24.0, 6.0);
-        let pt = AttractivePerturbationBH {
-            parameters: Arc::new(p.clone()),
-        };
-        let state = StateHD::new(
-            reduced_temperature * p.epsilon_k[0],
-            reduced_volume * p.sigma[0].powi(3),
-            moles.clone(),
-        );
-        let x = &state.molefracs;
-
-        let (rep_x, att_x, sigma_x, weighted_sigma3_ij, epsilon_k_x, d_x) =
-            one_fluid_properties(&p, &state.molefracs, state.temperature);
-        let t_x = state.temperature / epsilon_k_x;
-        let rho_x = state.partial_density.sum() * sigma_x.powi(3);
-
-        let mean_field_constant_x = mean_field_constant(rep_x, att_x, 1.0);
-
-        let i_bh = correlation_integral_bh(rho_x, mean_field_constant_x, rep_x, att_x, d_x);
-        let delta_a1u = state.partial_density.sum() / t_x * i_bh * 2.0 * PI * weighted_sigma3_ij;
-        dbg!(delta_a1u);
-        //assert!(delta_a1u.re() == -1.1470186919354);
-        assert_relative_eq!(delta_a1u.re(), -1.1470186919354, epsilon = 1e-12);
-
-        let u_fraction_bh = u_fraction_bh(
-            rep_x,
-            state.partial_density.sum() * (x * &p.sigma.mapv(|s| s.powi(3))).sum(),
-            t_x.recip(),
-        );
-        dbg!(u_fraction_bh);
-        //assert!(u_fraction_bh.re() == 0.743451055308332);
-        assert_relative_eq!(u_fraction_bh.re(), 0.743451055308332, epsilon = 1e-5);
-
-        let b21u = delta_b12u(t_x, mean_field_constant_x, weighted_sigma3_ij);
-        dbg!(b21u);
-        assert!(b21u.re() / p.sigma[0].powi(3) == -0.949898568221715);
-
-        let b2bar = residual_virial_coefficient(&p, x, state.temperature);
-        dbg!(b2bar);
-        assert_relative_eq!(
-            b2bar.re() / p.sigma[0].powi(3),
-            -1.00533412744652,
-            epsilon = 1e-12
-        );
-        //assert!(b2bar.re() ==-1.00533412744652);
-
-        //let a_test = state.moles.sum()
-        //  * (delta_a1u + (-u_fraction_bh + 1.0) * (b2bar - b21u) * state.partial_density.sum());
-        let a = pt.helmholtz_energy(&state) / moles[0];
-        dbg!(a.re());
-        //assert!(-1.16124062615291 == a.re())
-        assert_relative_eq!(-1.16124062615291, a.re(), epsilon = 1e-5);
+        let p = test_parameters(2.0, 12.0, 6.0, 1.0, 1.0);
+        let state = StateHD::new(reduced_temperature, reduced_volume, moles.clone());
+        let d = diameter_bh(&p, state.temperature);
+        dbg!(&d);
+        let delta_b2 = delta_b2_lj_chain(reduced_temperature, p.m[0], p.sigma[0], d[0] / p.sigma[0]);
+        dbg!(&delta_b2);
+        assert_eq!(1, 2);
     }
+//     #[test]
+//     fn test_attractive_perturbation() {
+//         // m = 12, t = 4.0, rho = 1.0
+//         let moles = arr1(&[2.0]);
+//         let reduced_temperature = 4.0;
+//         let reduced_density = 1.0;
+//         let reduced_volume = moles[0] / reduced_density;
+
+//         let p = methane_parameters(24.0, 6.0);
+//         let pt = AttractivePerturbationBH {
+//             parameters: Arc::new(p.clone()),
+//         };
+//         let state = StateHD::new(
+//             reduced_temperature * p.epsilon_k[0],
+//             reduced_volume * p.sigma[0].powi(3),
+//             moles.clone(),
+//         );
+//         let x = &state.molefracs;
+
+//         let (rep_x, att_x, sigma_x, weighted_sigma3_ij, epsilon_k_x, d_x) =
+//             one_fluid_properties(&p, &state.molefracs, state.temperature);
+//         let t_x = state.temperature / epsilon_k_x;
+//         let rho_x = state.partial_density.sum() * sigma_x.powi(3);
+
+//         let mean_field_constant_x = mean_field_constant(rep_x, att_x, 1.0);
+
+//         let i_bh = correlation_integral_bh(rho_x, mean_field_constant_x, rep_x, att_x, d_x);
+//         let delta_a1u = state.partial_density.sum() / t_x * i_bh * 2.0 * PI * weighted_sigma3_ij;
+//         dbg!(delta_a1u);
+//         //assert!(delta_a1u.re() == -1.1470186919354);
+//         assert_relative_eq!(delta_a1u.re(), -1.1470186919354, epsilon = 1e-12);
+
+//         let u_fraction_bh = u_fraction_bh(
+//             rep_x,
+//             state.partial_density.sum() * (x * &p.sigma.mapv(|s| s.powi(3))).sum(),
+//             t_x.recip(),
+//         );
+//         dbg!(u_fraction_bh);
+//         //assert!(u_fraction_bh.re() == 0.743451055308332);
+//         assert_relative_eq!(u_fraction_bh.re(), 0.743451055308332, epsilon = 1e-5);
+
+//         let b21u = delta_b12u(t_x, mean_field_constant_x, weighted_sigma3_ij);
+//         dbg!(b21u);
+//         assert!(b21u.re() / p.sigma[0].powi(3) == -0.949898568221715);
+
+//         let b2bar = residual_virial_coefficient(&p, x, state.temperature);
+//         dbg!(b2bar);
+//         assert_relative_eq!(
+//             b2bar.re() / p.sigma[0].powi(3),
+//             -1.00533412744652,
+//             epsilon = 1e-12
+//         );
+//         //assert!(b2bar.re() ==-1.00533412744652);
+
+//         //let a_test = state.moles.sum()
+//         //  * (delta_a1u + (-u_fraction_bh + 1.0) * (b2bar - b21u) * state.partial_density.sum());
+//         let a = pt.helmholtz_energy(&state) / moles[0];
+//         dbg!(a.re());
+//         //assert!(-1.16124062615291 == a.re())
+//         assert_relative_eq!(-1.16124062615291, a.re(), epsilon = 1e-5);
+//     }
 }

@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub(crate) mod attractive_perturbation_bh;
 pub(crate) mod attractive_perturbation_uvb3;
 pub(crate) mod attractive_perturbation_wca;
+pub(crate) mod chain_bh;
 pub(crate) mod hard_sphere_bh;
 pub(crate) mod hard_sphere_wca;
 pub(crate) mod reference_perturbation_bh;
@@ -19,6 +20,7 @@ pub(crate) mod ufraction;
 use attractive_perturbation_bh::AttractivePerturbationBH;
 use attractive_perturbation_uvb3::AttractivePerturbationUVB3;
 use attractive_perturbation_wca::AttractivePerturbationWCA;
+use chain_bh::ChainBH;
 use hard_sphere_bh::HardSphereBH;
 use hard_sphere_wca::HardSphereWCA;
 use reference_perturbation_bh::ReferencePerturbationBH;
@@ -91,6 +93,11 @@ impl UVTheory {
                     contributions.push(Box::new(AttractivePerturbationBH {
                         parameters: parameters.clone(),
                     }));
+                    if parameters.m.iter().any(|&mi| mi > 1.0) {
+                        contributions.push(Box::new(ChainBH {
+                            parameters: parameters.clone(),
+                        }));
+                    }
                 }
                 VirialOrder::Third => {
                     return Err(EosError::Error(
@@ -185,7 +192,7 @@ mod test {
     fn helmholtz_energy_pure_wca() -> EosResult<()> {
         let sig = 3.7039;
         let eps_k = 150.03;
-        let parameters = UVParameters::new_simple(24.0, 6.0, sig, eps_k);
+        let parameters = UVParameters::new_simple(1.0, 24.0, 6.0, sig, eps_k);
         let eos = Arc::new(UVTheory::new(Arc::new(parameters))?);
 
         let reduced_temperature = 4.0;
@@ -207,7 +214,7 @@ mod test {
         let sig = 3.7039;
         let rep = 24.0;
         let att = 6.0;
-        let parameters = UVParameters::new_simple(rep, att, sig, eps_k);
+        let parameters = UVParameters::new_simple(1.0, rep, att, sig, eps_k);
         let options = UVTheoryOptions {
             max_eta: 0.5,
             perturbation: Perturbation::BarkerHenderson,
@@ -236,7 +243,7 @@ mod test {
         let sig = 3.7039;
         let rep = 12.0;
         let att = 6.0;
-        let parameters = UVParameters::new_simple(rep, att, sig, eps_k);
+        let parameters = UVParameters::new_simple(1.0, rep, att, sig, eps_k);
         let options = UVTheoryOptions {
             max_eta: 0.5,
             perturbation: Perturbation::WeeksChandlerAndersen,
@@ -266,13 +273,13 @@ mod test {
         let rep1 = 24.0;
         let eps_k1 = 150.03;
         let sig1 = 3.7039;
-        let r1 = UVRecord::new(rep1, 6.0, sig1, eps_k1);
+        let r1 = UVRecord::new(1.0, rep1, 6.0, sig1, eps_k1);
         let i = Identifier::new(None, None, None, None, None, None);
         // compontent 2
         let rep2 = 24.0;
         let eps_k2 = 150.03;
         let sig2 = 3.7039;
-        let r2 = UVRecord::new(rep2, 6.0, sig2, eps_k2);
+        let r2 = UVRecord::new(1.0, rep2, 6.0, sig2, eps_k2);
         let j = Identifier::new(None, None, None, None, None, None);
         //////////////
 
@@ -312,6 +319,7 @@ mod test {
     #[test]
     fn helmholtz_energy_wca_mixture() -> EosResult<()> {
         let p = test_parameters_mixture(
+            arr1(&[1.0, 1.0]),
             arr1(&[12.0, 12.0]),
             arr1(&[6.0, 6.0]),
             arr1(&[1.0, 1.0]),
@@ -341,6 +349,7 @@ mod test {
     #[test]
     fn helmholtz_energy_wca_mixture_different_sigma() -> EosResult<()> {
         let p = test_parameters_mixture(
+            arr1(&[1.0, 1.0]),
             arr1(&[12.0, 12.0]),
             arr1(&[6.0, 6.0]),
             arr1(&[1.0, 2.0]),

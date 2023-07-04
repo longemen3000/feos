@@ -22,6 +22,7 @@ impl fmt::Display for NoRecord {
 /// uv-theory parameters for a pure substance
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UVRecord {
+    m: f64,
     rep: f64,
     att: f64,
     sigma: f64,
@@ -30,8 +31,9 @@ pub struct UVRecord {
 
 impl UVRecord {
     /// Single substance record for uv-theory
-    pub fn new(rep: f64, att: f64, sigma: f64, epsilon_k: f64) -> Self {
+    pub fn new(m: f64, rep: f64, att: f64, sigma: f64, epsilon_k: f64) -> Self {
         Self {
+            m,
             rep,
             att,
             sigma,
@@ -98,6 +100,11 @@ pub fn mie_prefactor<D: DualNum<f64> + Copy>(rep: D, att: D) -> D {
 }
 
 #[inline]
+pub fn mean_field_constant_f64(rep: f64, att: f64, x: f64) -> f64 {
+    mie_prefactor(rep, att) * (x.powd(-att + 3.0) / (att - 3.0) - x.powd(-rep + 3.0) / (rep - 3.0))
+}
+
+#[inline]
 pub fn mean_field_constant<D: DualNum<f64> + Copy>(rep: D, att: D, x: D) -> D {
     mie_prefactor(rep, att) * (x.powd(-att + 3.0) / (att - 3.0) - x.powd(-rep + 3.0) / (rep - 3.0))
 }
@@ -106,6 +113,7 @@ pub fn mean_field_constant<D: DualNum<f64> + Copy>(rep: D, att: D, x: D) -> D {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UVParameters {
     pub ncomponents: usize,
+    pub m: Array1<f64>,
     pub rep: Array1<f64>,
     pub att: Array1<f64>,
     pub sigma: Array1<f64>,
@@ -133,7 +141,8 @@ impl Parameter for UVParameters {
         let n = pure_records.len();
 
         let mut molarweight = Array::zeros(n);
-        let mut rep = Array::zeros(n);
+        let mut m = Array::zeros(n);
+        let mut rep = Array::zeros(n); 
         let mut att = Array::zeros(n);
         let mut sigma = Array::zeros(n);
         let mut epsilon_k = Array::zeros(n);
@@ -142,6 +151,7 @@ impl Parameter for UVParameters {
         for (i, record) in pure_records.iter().enumerate() {
             component_index.insert(record.identifier.clone(), i);
             let r = &record.model_record;
+            m[i] = r.m;
             rep[i] = r.rep;
             att[i] = r.att;
             sigma[i] = r.sigma;
@@ -180,6 +190,7 @@ impl Parameter for UVParameters {
 
         Self {
             ncomponents: n,
+            m,
             rep,
             att,
             sigma,
@@ -204,8 +215,8 @@ impl Parameter for UVParameters {
 
 impl UVParameters {
     /// Parameters for a single substance with molar weight one and no (default) ideal gas contributions.
-    pub fn new_simple(rep: f64, att: f64, sigma: f64, epsilon_k: f64) -> Self {
-        let model_record = UVRecord::new(rep, att, sigma, epsilon_k);
+    pub fn new_simple(m: f64, rep: f64, att: f64, sigma: f64, epsilon_k: f64) -> Self {
+        let model_record = UVRecord::new(m, rep, att, sigma, epsilon_k);
         let pure_record = PureRecord::new(Identifier::default(), 1.0, model_record);
         Self::new_pure(pure_record)
     }
@@ -252,25 +263,26 @@ pub mod utils {
     use feos_core::parameter::{Identifier, PureRecord};
     use std::f64;
 
-    pub fn test_parameters(rep: f64, att: f64, sigma: f64, epsilon: f64) -> UVParameters {
+    pub fn test_parameters(m: f64, rep: f64, att: f64, sigma: f64, epsilon: f64) -> UVParameters {
         let identifier = Identifier::new(Some("1"), None, None, None, None, None);
-        let model_record = UVRecord::new(rep, att, sigma, epsilon);
+        let model_record = UVRecord::new(m, rep, att, sigma, epsilon);
         let pr = PureRecord::new(identifier, 1.0, model_record);
         UVParameters::new_pure(pr)
     }
 
     pub fn test_parameters_mixture(
+        m: Array1<f64>,
         rep: Array1<f64>,
         att: Array1<f64>,
         sigma: Array1<f64>,
         epsilon: Array1<f64>,
     ) -> UVParameters {
         let identifier = Identifier::new(Some("1"), None, None, None, None, None);
-        let model_record = UVRecord::new(rep[0], att[0], sigma[0], epsilon[0]);
+        let model_record = UVRecord::new(m[0], rep[0], att[0], sigma[0], epsilon[0]);
         let pr1 = PureRecord::new(identifier, 1.0, model_record);
         //
         let identifier2 = Identifier::new(Some("1"), None, None, None, None, None);
-        let model_record2 = UVRecord::new(rep[1], att[1], sigma[1], epsilon[1]);
+        let model_record2 = UVRecord::new(m[0], rep[1], att[1], sigma[1], epsilon[1]);
         let pr2 = PureRecord::new(identifier2, 1.0, model_record2);
         let pure_records = vec![pr1, pr2];
         UVParameters::new_binary(pure_records, None)
@@ -278,7 +290,7 @@ pub mod utils {
 
     pub fn methane_parameters(rep: f64, att: f64) -> UVParameters {
         let identifier = Identifier::new(Some("1"), None, None, None, None, None);
-        let model_record = UVRecord::new(rep, att, 3.7039, 150.03);
+        let model_record = UVRecord::new(1.0, rep, att, 3.7039, 150.03);
         let pr = PureRecord::new(identifier, 1.0, model_record);
         UVParameters::new_pure(pr)
     }
