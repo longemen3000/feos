@@ -44,7 +44,8 @@ impl UVRecord {
 
 impl std::fmt::Display for UVRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "UVRecord(m={}", self.rep)?;
+        write!(f, "UVRecord(m={}", self.m)?;
+        write!(f, ", rep={}", self.rep)?;
         write!(f, ", att={}", self.att)?;
         write!(f, ", sigma={}", self.sigma)?;
         write!(f, ", epsilon_k={}", self.epsilon_k)?;

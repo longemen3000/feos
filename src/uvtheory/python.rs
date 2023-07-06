@@ -19,7 +19,6 @@ struct PyNoRecord(NoRecord);
 
 /// Create a set of UV Theory parameters from records.
 #[pyclass(name = "UVRecord")]
-#[pyo3(text_signature = "(rep, att, sigma, epsilon_k)")]
 #[derive(Clone)]
 pub struct PyUVRecord(UVRecord);
 
@@ -67,6 +66,8 @@ impl PyUVParameters {
     ///
     /// Parameters
     /// ----------
+    /// m : List[float]
+    ///     chain length (number of segments)
     /// rep : List[float]
     ///     repulsive exponents
     /// att : List[float]
@@ -105,6 +106,8 @@ impl PyUVParameters {
     ///
     /// Parameters
     /// ----------
+    /// m : float
+    ///     chain length (number of segments)
     /// rep : float
     ///     repulsive exponents
     /// att : float
