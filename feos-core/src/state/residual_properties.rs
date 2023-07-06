@@ -348,6 +348,17 @@ impl<E: Residual> State<E> {
                 * self.temperature
                 * self.compressibility(Contributions::Total).ln()
     }
+
+    /// Helmholtz energy $A$ evaluated for each contribution of the equation of state.
+    pub fn residual_helmholtz_energy_contributions(&self) -> Vec<(String, SINumber)> {
+        let new_state = self.derive0();
+        let contributions = self.eos.evaluate_residual_contributions(&new_state);
+        let mut res = Vec::with_capacity(contributions.len());
+        for (s, v) in contributions {
+            res.push((s, v * new_state.temperature * SIUnit::reference_energy()));
+        }
+        res
+    }
 }
 
 /// # Transport properties

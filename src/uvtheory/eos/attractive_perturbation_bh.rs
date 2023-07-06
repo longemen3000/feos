@@ -74,7 +74,7 @@ pub struct AttractivePerturbationBH {
 
 impl fmt::Display for AttractivePerturbationBH {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Attractive Perturbation")
+        write!(f, "Attractive Perturbation BH")
     }
 }
 

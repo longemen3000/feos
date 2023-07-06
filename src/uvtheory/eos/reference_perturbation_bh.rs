@@ -14,7 +14,7 @@ pub struct ReferencePerturbationBH {
 
 impl fmt::Display for ReferencePerturbationBH {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Reference Perturbation")
+        write!(f, "Reference Perturbation BH")
     }
 }
 

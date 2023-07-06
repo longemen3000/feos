@@ -10,8 +10,8 @@ use std::sync::Arc;
 pub(crate) mod attractive_perturbation_bh;
 pub(crate) mod attractive_perturbation_uvb3;
 pub(crate) mod attractive_perturbation_wca;
-pub(crate) mod chain_bh_tpty;
 pub(crate) mod chain_bh_tptv;
+pub(crate) mod chain_bh_tpty;
 pub(crate) mod hard_sphere_bh;
 pub(crate) mod hard_sphere_wca;
 pub(crate) mod reference_perturbation_bh;
@@ -21,8 +21,8 @@ pub(crate) mod ufraction;
 use attractive_perturbation_bh::AttractivePerturbationBH;
 use attractive_perturbation_uvb3::AttractivePerturbationUVB3;
 use attractive_perturbation_wca::AttractivePerturbationWCA;
-use chain_bh_tpty::ChainBH;
 use chain_bh_tptv::ChainBhTptv;
+use chain_bh_tpty::ChainBH;
 use hard_sphere_bh::HardSphereBH;
 use hard_sphere_wca::HardSphereWCA;
 use reference_perturbation_bh::ReferencePerturbationBH;
@@ -182,13 +182,57 @@ impl Residual for UVTheory {
 mod test {
     use super::*;
 
-    use crate::uvtheory::parameters::utils::test_parameters_mixture;
+    use crate::uvtheory::parameters::utils::{test_parameters, test_parameters_mixture};
     use crate::uvtheory::parameters::*;
     use approx::assert_relative_eq;
     use feos_core::parameter::{Identifier, Parameter, PureRecord};
     use feos_core::State;
     use ndarray::arr1;
-    use quantity::si::{ANGSTROM, KELVIN, MOL, NAV, RGAS};
+    use quantity::si::{ANGSTROM, KB, KELVIN, MOL, NAV, RGAS};
+
+    #[test]
+    fn helmholtz_energy_pure_bh_contributions() -> EosResult<()> {
+        let p = test_parameters(8.0, 12.0, 6.0, 1.0, 5.0);
+        let options = UVTheoryOptions {
+            max_eta: 0.5,
+            perturbation: Perturbation::BarkerHenderson,
+            virial_order: VirialOrder::Second,
+        };
+        let eos = Arc::new(UVTheory::with_options(Arc::new(p.clone()), options)?);
+
+        let moles = arr1(&[2.0]);
+        let reduced_temperature = 2.0;
+        let reduced_density = 0.04;
+        let reduced_volume = moles[0] / reduced_density;
+
+        let m = moles / NAV;
+        let s = State::new_nvt(
+            &eos,
+            reduced_temperature * p.epsilon_k[0] * KELVIN,
+            reduced_volume * p.sigma[0] * ANGSTROM.powi(3),
+            &m,
+        )?;
+        dbg!(s.temperature.to_reduced(KELVIN));
+        let contributions = s.residual_helmholtz_energy_contributions();
+
+        println!(
+            "T* = {}, rho* = {}, m = {}, sigma = {}, epsilon_k = {}",
+            reduced_temperature, reduced_density, p.m[0], p.sigma[0], p.epsilon_k[0]
+        );
+        for (name, value) in contributions.iter() {
+            let a_red = value.to_reduced(RGAS * s.temperature * s.total_moles)?;
+            println!("{:<30}: A / NkT = {:>.10}", &name, a_red);
+            // dbg!(&name, value);
+        }
+        println!(
+            "{:<30}: A / NkT = {:>.10}",
+            "Total",
+            s.residual_helmholtz_energy()
+                .to_reduced(RGAS * s.temperature * s.total_moles)?
+        );
+        assert!(1 == 2);
+        Ok(())
+    }
 
     #[test]
     fn helmholtz_energy_pure_wca() -> EosResult<()> {

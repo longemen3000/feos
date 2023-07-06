@@ -24,7 +24,7 @@ pub struct ChainBhTptv {
 
 impl fmt::Display for ChainBhTptv {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Reference Perturbation")
+        write!(f, "Chain BH TPT V")
     }
 }
 
