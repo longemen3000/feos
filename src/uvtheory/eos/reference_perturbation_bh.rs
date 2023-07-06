@@ -25,7 +25,7 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ReferencePerturbationBH 
         let n = p.sigma.len();
         let x = &state.molefracs;
         let d = diameter_bh(p, state.temperature);
-        let eta = packing_fraction(&state.partial_density, &d);
+        let eta = packing_fraction(&p.m, &state.partial_density, &d);
         let eta_a = packing_fraction_a(p, &d, eta);
         let eta_b = packing_fraction_b(p, &d, eta);
         let mbar = (&state.molefracs * &self.parameters.m).sum();
@@ -39,13 +39,31 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ReferencePerturbationBH 
                     * p.m[j]
                     * (((-eta_a[[i, j]] * 0.5 + 1.0) / (-eta_a[[i, j]] + 1.0).powi(3))
                         - ((-eta_b[[i, j]] * 0.5 + 1.0) / (-eta_b[[i, j]] + 1.0).powi(3)))
-                    * (-d_ij.powi(3) + p.sigma_ij[[i, j]].powi(3)) / (2.0 - 2.0 / (p.m[i] + p.m[j]))
+                    * (-d_ij.powi(3) + p.sigma_ij[[i, j]].powi(3))
+                    / (2.0 - 2.0 / (p.m[i] + p.m[j]))
             }
         }
 
         -a * state.moles.sum().powi(2) * 2.0 / 3.0 / state.volume * PI * mbar
     }
 }
+
+// fn diameter_bh_chain<D: DualNum<f64>>(parameters: &UVParameters, temperature: D) -> Array1<D> {
+//     let p = &parameters;
+//     let reduced_temperature = p.epsilon_k.mapv(|eps_k_i| temperature / eps_k_i);
+//     let b =[0.852987920795915,-0.128229846701676,
+//                         0.833664689185409,0.0240477795238045,
+//                         0.0177618321999164,0.127015906854396,
+//                         -0.528941139160234,-0.147289922797747];
+
+//     let fac1 = (&p.m - 1.0) / &p.m;
+//     let fac2 = fac1 * (&p.m-2.0)/&p.m;
+//     let a_1 = b[0] + b[1] * fac1 + b[2] * fac2;
+//     let a_2 = b[3] + b[4] * fac1 + b[5] * fac2;
+//     let fac3 = ((1.0 / 24.0)*(1.0 + b[6] * fac1 + b[7] * fac2));
+
+//     (1.0 / (1.0 + a_1 * t_st + a_2 * t_st**2 ))**fac3
+// }
 
 #[cfg(test)]
 mod test {

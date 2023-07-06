@@ -2,6 +2,7 @@ use crate::uvtheory::parameters::UVParameters;
 use feos_core::{HelmholtzEnergyDual, StateHD};
 use ndarray::prelude::*;
 use num_dual::DualNum;
+use std::f64::consts::FRAC_PI_6;
 use std::fmt;
 use std::sync::Arc;
 
@@ -79,11 +80,12 @@ pub(super) fn zeta<D: DualNum<f64> + Copy>(
 }
 
 pub(super) fn packing_fraction<D: DualNum<f64> + Copy>(
+    m: &Array1<f64>,
     partial_density: &Array1<D>,
     diameter: &Array1<D>,
 ) -> D {
     (0..partial_density.len()).fold(D::zero(), |acc, i| {
-        acc + partial_density[i] * diameter[i].powi(3) * (std::f64::consts::PI / 6.0)
+        acc + partial_density[i] * diameter[i].powi(3) * m[i] * FRAC_PI_6
     })
 }
 

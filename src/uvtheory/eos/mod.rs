@@ -10,7 +10,8 @@ use std::sync::Arc;
 pub(crate) mod attractive_perturbation_bh;
 pub(crate) mod attractive_perturbation_uvb3;
 pub(crate) mod attractive_perturbation_wca;
-pub(crate) mod chain_bh;
+pub(crate) mod chain_bh_tpty;
+pub(crate) mod chain_bh_tptv;
 pub(crate) mod hard_sphere_bh;
 pub(crate) mod hard_sphere_wca;
 pub(crate) mod reference_perturbation_bh;
@@ -20,7 +21,8 @@ pub(crate) mod ufraction;
 use attractive_perturbation_bh::AttractivePerturbationBH;
 use attractive_perturbation_uvb3::AttractivePerturbationUVB3;
 use attractive_perturbation_wca::AttractivePerturbationWCA;
-use chain_bh::ChainBH;
+use chain_bh_tpty::ChainBH;
+use chain_bh_tptv::ChainBhTptv;
 use hard_sphere_bh::HardSphereBH;
 use hard_sphere_wca::HardSphereWCA;
 use reference_perturbation_bh::ReferencePerturbationBH;
@@ -94,7 +96,7 @@ impl UVTheory {
                         parameters: parameters.clone(),
                     }));
                     if parameters.m.iter().any(|&mi| mi > 1.0) {
-                        contributions.push(Box::new(ChainBH {
+                        contributions.push(Box::new(ChainBhTptv {
                             parameters: parameters.clone(),
                         }));
                     }

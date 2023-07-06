@@ -6,6 +6,18 @@ use num_dual::DualNum;
 use std::fmt;
 use std::{f64::consts::FRAC_PI_6, f64::consts::PI, sync::Arc};
 
+
+const BH_DIAMETER: [f64; 8] = [
+    0.852987920795915,
+    -0.128229846701676,
+    0.833664689185409,
+    0.0240477795238045,
+    0.0177618321999164,
+    0.127015906854396,
+    -0.528941139160234,
+    -0.147289922797747,
+];
+
 #[derive(Debug, Clone)]
 pub struct ChainBH {
     pub parameters: Arc<UVParameters>,
@@ -25,7 +37,7 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ChainBH {
         let x = &state.molefracs;
         let m = &p.m;
         let d = diameter_bh(p, state.temperature);
-        let eta = packing_fraction(&state.partial_density, &d);
+        let eta = packing_fraction(m, &state.partial_density, &d);
         let zms = (-eta + 1.0).recip();
         let zms2 = zms * zms;
         let z2t = (x * m * d.mapv(|di| di.powi(2))).sum() * FRAC_PI_6;
@@ -120,6 +132,70 @@ fn g_mspt<D: DualNum<f64> + Copy>(
     // !-------------------
     (muhs_i * 2.0 - muhd_ij).exp()
 }
+
+
+fn diameter_bh_chain_ij<D: DualNum<f64> + Copy>(
+    m_i: f64,
+    m_j: f64,
+    epsilon_k_ij: f64,
+    temperature: D,
+) -> D {
+    let reduced_temperature = temperature / epsilon_k_ij;
+
+    let m_ij = 0.5 * (m_i + m_j);
+    let fac1 = (m_ij - 1.0) / m_ij;
+    let fac2 = fac1 * (m_ij - 2.0) / m_ij;
+    let a_1 = fac1 * BH_DIAMETER[1] + fac2 * BH_DIAMETER[2] + BH_DIAMETER[0];
+    let a_2 = fac1 * BH_DIAMETER[4] + fac2 * BH_DIAMETER[5] + BH_DIAMETER[3];
+    let fac3 = ((1.0 / 24.0) * (1.0 + BH_DIAMETER[6] * fac1 + BH_DIAMETER[7] * fac2));
+
+    (reduced_temperature * a_1 + reduced_temperature.powi(2) * a_2 + 1.0)
+        .recip()
+        .powf(fac3)
+}
+
+/// Total second virial coefficient of a mixture of Barker Henderson LJ chains.
+/// 
+/// # Note
+/// 
+/// Not tested for mixtures.
+pub fn b20_lj_chain<D: DualNum<f64> + Copy>(parameters: &UVParameters, x: &Array1<D>, temperature: D) -> D {
+    let m = &parameters.m;
+    let n = m.len();
+    let dimensionless_bond_length = 1.0;
+    let dimensionless_bond_length_squared = dimensionless_bond_length.powi(2);
+    let orientational_average = 0.0006736 * dimensionless_bond_length
+        + 0.7443 * dimensionless_bond_length_squared
+        + 0.01482 * dimensionless_bond_length * dimensionless_bond_length_squared
+        - 0.06578 * dimensionless_bond_length_squared.powi(2);
+    let mut b20 = D::zero();
+    for i in 0..n {
+        let x_i = x[i];
+        let m_i = m[i];
+        let gamma_i = 0.2079 + 0.6388 / m_i.powi(3);
+        for j in 0..n {
+            let gamma_j = 0.2079 + 0.6388 / m[j].powi(3);
+            let m_ij = 0.5 * (m_i + m[j]);
+            let d_ij = diameter_bh_chain_ij(m_i, m[j], parameters.eps_k_ij[[i, j]], temperature);
+            b20 += x_i * x[j] * d_ij.powi(3)
+                * parameters.sigma_ij[[i, j]].powi(3)
+                * 4.0
+                * FRAC_PI_6
+                * (1.0
+                    + (m_ij - 1.0)
+                        * (1.5 * dimensionless_bond_length
+                            - (1.0 / 8.0)
+                                * dimensionless_bond_length
+                                * dimensionless_bond_length_squared)
+                    + 0.5
+                        * orientational_average
+                        * (m_i - 1.0).powf(1.0 - 0.5 * gamma_i * dimensionless_bond_length)
+                        * (m[j] - 1.0).powf(1.0 - 0.5 * gamma_j * dimensionless_bond_length));
+        }
+    }
+    b20
+}
+
 
 #[cfg(test)]
 mod test {
@@ -293,5 +369,23 @@ mod test {
         let a = chain.helmholtz_energy(&state) / moles.sum();
         dbg!(&a);
         assert_eq!(a, 1.0);
+    }
+
+    #[test]
+    fn test_b20_lj_chain() {
+        let moles = arr1(&[2.0]);
+
+        let reduced_temperature = 4.0;
+        let reduced_density = 1.0;
+        let reduced_volume = moles[0] / reduced_density;
+
+        let p = test_parameters(3.0, 12.0, 6.0, 1.0, 1.0);
+        let pt = ChainBH {
+            parameters: Arc::new(p.clone()),
+        };
+        let state = StateHD::new(reduced_temperature, reduced_volume, moles.clone());
+        let b20 = b20_lj_chain(&p, &state.molefracs, state.temperature);
+        dbg!(&b20);
+        assert_eq!(b20, -0.0611105573289734);
     }
 }
