@@ -28,9 +28,9 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for HardSphereBH {
     /// Helmholtz energy for hard spheres, eq. 19 (check Volume)
     fn helmholtz_energy(&self, state: &StateHD<D>) -> D {
         let d = diameter_bh(&self.parameters, state.temperature);
-        let zeta = zeta(&state.partial_density, &d);
+        let zeta = zeta(&self.parameters.m, &state.partial_density, &d);
         let frac_1mz3 = -(zeta[3] - 1.0).recip();
-        let zeta_23 = zeta_23(&state.molefracs, &d);
+        let zeta_23 = zeta_23(&self.parameters.m, &state.molefracs, &d);
         let mbar = (&state.molefracs * &self.parameters.m).sum();
         state.volume * 6.0 / std::f64::consts::PI * mbar
             * (zeta[1] * zeta[2] * frac_1mz3 * 3.0
@@ -66,6 +66,7 @@ pub(super) fn diameter_bh<D: DualNum<f64> + Copy>(
 }
 
 pub(super) fn zeta<D: DualNum<f64> + Copy>(
+    m: &Array1<f64>,
     partial_density: &Array1<D>,
     diameter: &Array1<D>,
 ) -> [D; 4] {
@@ -73,7 +74,7 @@ pub(super) fn zeta<D: DualNum<f64> + Copy>(
     for i in 0..partial_density.len() {
         for k in 0..4 {
             zeta[k] +=
-                partial_density[i] * diameter[i].powi(k as i32) * (std::f64::consts::PI / 6.0);
+                partial_density[i] * diameter[i].powi(k as i32) * m[i] * (std::f64::consts::PI / 6.0);
         }
     }
     zeta
@@ -89,11 +90,11 @@ pub(super) fn packing_fraction<D: DualNum<f64> + Copy>(
     })
 }
 
-pub(super) fn zeta_23<D: DualNum<f64> + Copy>(molefracs: &Array1<D>, diameter: &Array1<D>) -> D {
+pub(super) fn zeta_23<D: DualNum<f64> + Copy>(m: &Array1<f64>, molefracs: &Array1<D>, diameter: &Array1<D>) -> D {
     let mut zeta: [D; 2] = [D::zero(), D::zero()];
     for i in 0..molefracs.len() {
         for k in 0..2 {
-            zeta[k] += molefracs[i] * diameter[i].powi((k + 2) as i32);
+            zeta[k] += molefracs[i] * m[i] * diameter[i].powi((k + 2) as i32);
         }
     }
     zeta[0] / zeta[1]

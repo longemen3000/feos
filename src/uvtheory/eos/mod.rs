@@ -192,7 +192,7 @@ mod test {
 
     #[test]
     fn helmholtz_energy_pure_bh_contributions() -> EosResult<()> {
-        let p = test_parameters(8.0, 12.0, 6.0, 1.0, 5.0);
+        let p = test_parameters(8.0, 12.0, 6.0, 1.0, 1.0);
         let options = UVTheoryOptions {
             max_eta: 0.5,
             perturbation: Perturbation::BarkerHenderson,

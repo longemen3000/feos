@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 
+use crate::hard_sphere::{HardSphereProperties, MonomerShape};
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NoRecord;
 
@@ -247,6 +249,26 @@ impl UVParameters {
             .unwrap();
         }
         output
+    }
+}
+
+impl HardSphereProperties for UVParameters {
+    fn monomer_shape<N: DualNum<f64>>(&self, _: N) -> MonomerShape<N> {
+        MonomerShape::NonSpherical(self.m.mapv(N::from))
+    }
+
+    fn hs_diameter<D: DualNum<f64> + Copy>(&self, temperature: D) -> Array1<D> {
+        self
+        .cd_bh_pure
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let t = temperature / self.epsilon_k[i];
+            let d = t.powf(0.25) * c[1] + t.powf(0.75) * c[2] + t.powf(1.25) * c[3];
+            (t * c[0] + d * (t + 1.0).ln() + t.powi(2) * c[4] + 1.0).powf(-0.5 / self.rep[i])
+                * self.sigma[i]
+        })
+        .collect()
     }
 }
 
