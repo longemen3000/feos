@@ -31,8 +31,7 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for HardSphereBH {
         let zeta = zeta(&self.parameters.m, &state.partial_density, &d);
         let frac_1mz3 = -(zeta[3] - 1.0).recip();
         let zeta_23 = zeta_23(&self.parameters.m, &state.molefracs, &d);
-        let mbar = (&state.molefracs * &self.parameters.m).sum();
-        state.volume * 6.0 / std::f64::consts::PI * mbar
+        state.volume * 6.0 / std::f64::consts::PI
             * (zeta[1] * zeta[2] * frac_1mz3 * 3.0
                 + zeta[2].powi(2) * frac_1mz3.powi(2) * zeta_23
                 + (zeta[2] * zeta_23.powi(2) - zeta[0]) * (zeta[3] * (-1.0)).ln_1p())

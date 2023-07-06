@@ -192,7 +192,7 @@ mod test {
 
     #[test]
     fn helmholtz_energy_pure_bh_contributions() -> EosResult<()> {
-        let p = test_parameters(8.0, 12.0, 6.0, 1.0, 1.0);
+        let p = test_parameters(8.0, 12.0, 6.0, 13.37, 1.0);
         let options = UVTheoryOptions {
             max_eta: 0.5,
             perturbation: Perturbation::BarkerHenderson,
@@ -209,7 +209,7 @@ mod test {
         let s = State::new_nvt(
             &eos,
             reduced_temperature * p.epsilon_k[0] * KELVIN,
-            reduced_volume * p.sigma[0] * ANGSTROM.powi(3),
+            reduced_volume * (p.sigma[0] * ANGSTROM).powi(3),
             &m,
         )?;
         dbg!(s.temperature.to_reduced(KELVIN));

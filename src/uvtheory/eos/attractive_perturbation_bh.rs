@@ -78,6 +78,74 @@ impl fmt::Display for AttractivePerturbationBH {
     }
 }
 
+#[derive(Debug)]
+struct OneFluidProperties<D> {
+    m: D,
+    rep: D,
+    att: D,
+    sigma: D,
+    epsilon_k: D,
+    /// sigma cubed using quadratic mixture rule
+    sigma3_quadratic: D,
+    reduced_diameter: D,
+    reduced_segment_density: D,
+    reduced_temperature: D,
+}
+
+impl<D: DualNum<f64> + Copy> OneFluidProperties<D> {
+    fn new(
+        parameters: &UVParameters,
+        x: &Array1<D>,
+        partial_density: &Array1<D>,
+        temperature: D,
+    ) -> Self {
+        // non-reduced temperature dependent diameter
+        let d = diameter_bh(parameters, temperature);
+
+        let mut epsilon_k = D::zero();
+        let mut sigma3_quadratic = D::zero();
+        let mut rep = D::zero();
+        let mut att = D::zero();
+        let mut d_x_3 = D::zero();
+        let mut m = D::zero();
+        let mut mbar_quadratic = D::zero();
+        for i in 0..parameters.ncomponents {
+            let xi = x[i];
+            let mi = parameters.m[i];
+            m += x[i] * mi;
+            d_x_3 += x[i] * mi * d[i].powi(3);
+            for j in 0..parameters.ncomponents {
+                mbar_quadratic += xi * x[j] * mi * parameters.m[j];
+                let _y = xi * x[j] * mi * parameters.m[j] * parameters.sigma_ij[[i, j]].powi(3);
+                sigma3_quadratic += _y;
+                epsilon_k += _y * parameters.eps_k_ij[[i, j]];
+
+                rep += xi * x[j] * parameters.rep_ij[[i, j]];
+                att += xi * x[j] * parameters.att_ij[[i, j]];
+            }
+        }
+        sigma3_quadratic /= mbar_quadratic;
+        let sigma =
+            ((x * &parameters.m * &parameters.sigma.mapv(|v| v.powi(3))).sum() / m).powf(1.0 / 3.0);
+        let reduced_diameter = (d_x_3 / m).powf(1.0 / 3.0) / sigma;
+        let reduced_segment_density = partial_density.sum() * sigma.powi(3) * m;
+        epsilon_k /= sigma3_quadratic * mbar_quadratic;
+        let reduced_temperature = temperature / epsilon_k;
+
+        Self {
+            m,
+            rep,
+            att,
+            sigma,
+            epsilon_k,
+            sigma3_quadratic,
+            reduced_diameter,
+            reduced_segment_density,
+            reduced_temperature,
+        }
+    }
+}
+
 impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH {
     /// Helmholtz energy for attractive perturbation, eq. 52
     fn helmholtz_energy(&self, state: &StateHD<D>) -> D {
@@ -88,13 +156,10 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
         let n = x.len();
 
         // vdw effective one fluid properties
-        let (mbar, mbar_quadratic, rep_x, att_x, sigma_x, sigma3_x_quadratic, epsilon_k_x, d_x) =
-            one_fluid_properties(p, x, t);
-        let t_x = state.temperature / epsilon_k_x;
-        let rho_x = density * sigma_x.powi(3) * mbar;
+        let one_fluid = OneFluidProperties::new(p, x, &state.partial_density, t);
 
         // Not intended to work for mixtures
-        let m2 = (mbar - 2.0) / mbar;
+        let m2 = (one_fluid.m - 2.0) / one_fluid.m;
         let m2_squared = m2 * m2;
         let a_intra = m2_squared * C_BH_CHAIN_INTRA[0];
         let b_intra = m2_squared * C_BH_CHAIN_INTRA[1];
@@ -102,18 +167,25 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
 
         let mut delta_a1u_intra = D::zero();
         let mut delta_b12u_intra = D::zero();
-        let cmie = mie_prefactor(rep_x, att_x);
+        let cmie = mie_prefactor(one_fluid.rep, one_fluid.att);
         if p.m[0] > 2.0 {
-            delta_a1u_intra =
-                rho_x * cmie * (a_intra + b_intra * rho_x + c_intra * rho_x.powf(2.0));
-            let fac = mbar.recip() * C_BH_CHAIN_INTRA[3] + 1.0;
-            delta_a1u_intra *= mbar.powd(fac) / t_x;
-            delta_b12u_intra = cmie * a_intra * mbar.powd(fac) / t_x;
+            delta_a1u_intra = one_fluid.reduced_segment_density
+                * cmie
+                * (a_intra
+                    + b_intra * one_fluid.reduced_segment_density
+                    + c_intra * one_fluid.reduced_segment_density.powf(2.0));
+            let fac = one_fluid.m.recip() * C_BH_CHAIN_INTRA[3] + 1.0;
+            delta_a1u_intra *= one_fluid.m.powd(fac) / one_fluid.reduced_temperature;
+            delta_b12u_intra = cmie * a_intra * one_fluid.m.powd(fac) / one_fluid.reduced_temperature * one_fluid.sigma.powi(3);
         }
 
         let mut delta_a1u = D::zero();
         let mut delta = D::zero();
-        let phi_x = u_fraction_bh_chain(mbar, rho_x, t_x.recip());
+        let phi_x = u_fraction_bh_chain(
+            one_fluid.m,
+            one_fluid.reduced_segment_density,
+            one_fluid.reduced_temperature.recip(),
+        );
         let d = diameter_bh(p, state.temperature);
         for i in 0..n {
             let xi = x[i];
@@ -121,14 +193,14 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
             for j in 0..n {
                 let alpha_ij = mean_field_constant_f64(p.rep_ij[[i, j]], p.att_ij[[i, j]], 1.0);
                 let (i_bh_ij, b21_inter_ij) = correlation_integral_and_b21_bh(
-                    rho_x,
-                    t_x,
+                    one_fluid.reduced_segment_density,
+                    one_fluid.reduced_temperature,
                     alpha_ij,
-                    mbar,
+                    one_fluid.m,
                     p.rep_ij[[i, j]],
                     p.att_ij[[i, j]],
-                    sigma3_x_quadratic,
-                    d_x,
+                    one_fluid.sigma3_quadratic,
+                    one_fluid.reduced_diameter,
                 );
                 delta_a1u += xi
                     * x[j]
@@ -143,7 +215,7 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
                         state.temperature / p.eps_k_ij[[i, j]],
                         0.5 * (mi + p.m[j]),
                         p.sigma_ij[[i, j]],
-                        (d[i] + d[j]) * 0.5,
+                        (d[i] / p.sigma[i] + d[j] / p.sigma[j]) * 0.5,
                     ) - (b21_inter_ij + delta_b12u_intra));
             }
         }
@@ -170,6 +242,7 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let mean_field_constant = mean_field_constant(12.0, 6.0, 1.0) / c_mie;
     let fac = d - 1.0;
     let m_nu = m.powf(-NU);
+    let t_recip = reduced_temperature.recip();
 
     let c1 = [
         4.18938869e-02,
@@ -186,7 +259,7 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let a2 = fac * (m_nu * c1[5] + c1[4]) + c1[0] + m_nu * c1[1];
     let a3 = fac * (m_nu * c1[7] + c1[6]) + c1[2] + m_nu * c1[3];
 
-    let prefac = reduced_temperature.recip() * 2.0 * PI * m.powi(2) * sigma.powi(3);
+    let prefac = t_recip * 2.0;
     let b_21 = prefac * c_mie * (a2 * m1 + a3 * m12 + a1) * m_nu;
 
     let c2 = [
@@ -205,7 +278,7 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let a2 = fac * (m_nu * c2[6] + c2[5]) + c2[1] + m_nu * c2[2];
     let a3 = fac * (m_nu * c2[8] + c2[7]) + c2[3] + m_nu * c2[4];
 
-    let prefac = -reduced_temperature.recip().powi(2) * PI * m.powi(2) * sigma.powi(3);
+    let prefac = -t_recip.powi(2);
     let b_22 = prefac * c_mie * (a2 * m1 + a3 * m12 + a1);
 
     let c3 = [
@@ -224,10 +297,10 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let a2 = fac * (m_nu * c3[6] + c3[5]) + c3[1] + m_nu * c3[2];
     let a3 = fac * (m_nu * c3[8] + c3[7]) + c3[3] + m_nu * c3[4];
 
-    let prefac = reduced_temperature.recip().powi(3) * (1.0 / 3.0) * PI * m.powi(2) * sigma.powi(3);
+    let prefac = t_recip.powi(3) * (1.0 / 3.0);
     let b_23 = prefac * c_mie * (a2 * m1 + a3 * m12 + a1);
 
-    let phi = (reduced_temperature.recip() * 0.0208820673)
+    let phi = (t_recip * 0.0208820673)
         .tanh()
         .powf(1.51646922);
 
@@ -255,11 +328,10 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let a2 = m1 * par[9] + m12 * par[10] + m123 * par[11] + par[8];
     let a3 = m1 * par[13] + m12 * par[14] + m123 * par[15] + par[12];
 
-    let psi = -((reduced_temperature.recip() * a1).exp() - 1.0) * a0
-        - ((reduced_temperature.recip() * 2.0 * a3).exp() - 1.0) * a2;
-    let fac = m.powi(2) * (PI / 6.0);
+    let psi = -((t_recip * a1).exp() - 1.0) * a0
+        - ((t_recip * 2.0 * a3).exp() - 1.0) * a2;
 
-    b_21 + b_22 + b_23 + phi * psi * fac
+    (b_21 + b_22 + b_23 + phi * psi / 6.0) * PI * m.powi(2) * sigma.powi(3)
 }
 
 fn residual_virial_coefficient<D: DualNum<f64> + Copy>(p: &UVParameters, x: &Array1<D>, t: D) -> D {
@@ -315,7 +387,8 @@ fn correlation_integral_and_b21_bh<D: DualNum<f64> + Copy>(
     let d = d_monomer - m1 * d2 - m12 * d3;
     let i_inter = (a + (b * rho_x + c * rho_x.powf(2.0)) / (d * rho_x + 1.0).powf(2.0))
         * mie_prefactor(rep, att);
-    let b21_inter = a * mie_prefactor(rep, att) / t_x * mbar.powi(2) * sigma3_x_quadratic * 2.0 * PI;
+    let b21_inter =
+        a * mie_prefactor(rep, att) / t_x * mbar.powi(2) * sigma3_x_quadratic * 2.0 * PI;
     (i_inter, b21_inter)
 }
 
