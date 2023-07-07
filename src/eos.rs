@@ -41,6 +41,7 @@ pub enum ResidualModel {
     #[implement(molar_weight)]
     Pets(Pets),
     #[cfg(feature = "uvtheory")]
+    #[implement(molar_weight)]
     UVTheory(UVTheory),
 }
 

@@ -2,8 +2,10 @@
 #![allow(clippy::needless_range_loop)]
 
 use super::parameters::UVParameters;
+use feos_core::MolarWeight;
 use feos_core::{parameter::Parameter, Components, EosError, EosResult, HelmholtzEnergy, Residual};
 use ndarray::Array1;
+use quantity::si::*;
 use std::f64::consts::FRAC_PI_6;
 use std::sync::Arc;
 
@@ -170,11 +172,17 @@ impl Components for UVTheory {
 impl Residual for UVTheory {
     fn compute_max_density(&self, moles: &Array1<f64>) -> f64 {
         self.options.max_eta * moles.sum()
-            / (FRAC_PI_6 * self.parameters.sigma.mapv(|v| v.powi(3)) * moles).sum()
+            / (FRAC_PI_6 * &self.parameters.m * self.parameters.sigma.mapv(|v| v.powi(3)) * moles).sum()
     }
 
     fn contributions(&self) -> &[Box<dyn HelmholtzEnergy>] {
         &self.contributions
+    }
+}
+
+impl MolarWeight for UVTheory {
+    fn molar_weight(&self) -> SIArray1 {
+        self.parameters.molarweight.clone() * GRAM / MOL
     }
 }
 
