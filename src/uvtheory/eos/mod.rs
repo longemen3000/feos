@@ -172,7 +172,8 @@ impl Components for UVTheory {
 impl Residual for UVTheory {
     fn compute_max_density(&self, moles: &Array1<f64>) -> f64 {
         self.options.max_eta * moles.sum()
-            / (FRAC_PI_6 * &self.parameters.m * self.parameters.sigma.mapv(|v| v.powi(3)) * moles).sum()
+            / (FRAC_PI_6 * &self.parameters.m * self.parameters.sigma.mapv(|v| v.powi(3)) * moles)
+                .sum()
     }
 
     fn contributions(&self) -> &[Box<dyn HelmholtzEnergy>] {
@@ -200,7 +201,7 @@ mod test {
 
     #[test]
     fn helmholtz_energy_pure_bh_contributions() -> EosResult<()> {
-        let p = test_parameters(8.0, 12.0, 6.0, 13.37, 1.0);
+        let p = test_parameters(8.0, 12.0, 6.0, 1.0, 1.5);
         let options = UVTheoryOptions {
             max_eta: 0.5,
             perturbation: Perturbation::BarkerHenderson,
@@ -210,8 +211,57 @@ mod test {
 
         let moles = arr1(&[2.0]);
         let reduced_temperature = 2.0;
-        let reduced_density = 0.04;
+        let reduced_density = 0.000003;// * p.sigma[0].powi(3);
         let reduced_volume = moles[0] / reduced_density;
+
+        let m = moles / NAV;
+        let s = State::new_nvt(
+            &eos,
+            reduced_temperature * p.epsilon_k[0] * KELVIN,
+            reduced_volume * (p.sigma[0] * ANGSTROM).powi(3),
+            &m,
+        )?;
+        let contributions = s.residual_helmholtz_energy_contributions();
+
+        println!(
+            "T* = {}, rho* = {}, m = {}, sigma = {}, epsilon_k = {}",
+            reduced_temperature, reduced_density, p.m[0], p.sigma[0], p.epsilon_k[0]
+        );
+        for (name, value) in contributions.iter() {
+            let a_red = value.to_reduced(RGAS * s.temperature * s.total_moles)?;
+            println!("{:<30}: A / NkT = {:>.10}", &name, a_red);
+            // dbg!(&name, value);
+        }
+        println!(
+            "{:<30}: A / NkT = {:>.10}",
+            "Total",
+            s.residual_helmholtz_energy()
+                .to_reduced(RGAS * s.temperature * s.total_moles)?
+        );
+        assert!(1 == 2);
+        Ok(())
+    }
+
+    #[test]
+    fn helmholtz_energy_mix_bh_contributions() -> EosResult<()> {
+        let p = test_parameters_mixture(
+            arr1(&[8.0, 4.0]),
+            arr1(&[12.0, 12.0]),
+            arr1(&[6.0, 6.0]),
+            arr1(&[1.0, 2.0]),
+            arr1(&[1.0, 2.0]),
+        );
+        let options = UVTheoryOptions {
+            max_eta: 0.5,
+            perturbation: Perturbation::BarkerHenderson,
+            virial_order: VirialOrder::Second,
+        };
+        let eos = Arc::new(UVTheory::with_options(Arc::new(p.clone()), options)?);
+
+        let moles = arr1(&[2.0, 1e-15]);
+        let reduced_temperature = 2.0;
+        let reduced_density = 0.02;
+        let reduced_volume = moles.sum() / reduced_density;
 
         let m = moles / NAV;
         let s = State::new_nvt(

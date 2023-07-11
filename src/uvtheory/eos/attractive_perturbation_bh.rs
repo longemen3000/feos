@@ -131,7 +131,6 @@ impl<D: DualNum<f64> + Copy> OneFluidProperties<D> {
         let reduced_segment_density = partial_density.sum() * sigma.powi(3) * m;
         epsilon_k /= sigma3_quadratic * mbar_quadratic;
         let reduced_temperature = temperature / epsilon_k;
-
         Self {
             m,
             rep,
@@ -176,7 +175,9 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
                     + c_intra * one_fluid.reduced_segment_density.powf(2.0));
             let fac = one_fluid.m.recip() * C_BH_CHAIN_INTRA[3] + 1.0;
             delta_a1u_intra *= one_fluid.m.powd(fac) / one_fluid.reduced_temperature;
-            delta_b12u_intra = cmie * a_intra * one_fluid.m.powd(fac) / one_fluid.reduced_temperature * one_fluid.sigma.powi(3);
+            delta_b12u_intra = cmie * a_intra * one_fluid.m.powd(fac)
+                / one_fluid.reduced_temperature
+                * (x * &p.m * &p.sigma.mapv(|s| s.powi(3))).sum();
         }
 
         let mut delta_a1u = D::zero();
@@ -215,11 +216,10 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for AttractivePerturbationBH
                         state.temperature / p.eps_k_ij[[i, j]],
                         0.5 * (mi + p.m[j]),
                         p.sigma_ij[[i, j]],
-                        (d[i] / p.sigma[i] + d[j] / p.sigma[j]) * 0.5,
+                        (d[i] + d[j]) / (p.sigma[i] + p.sigma[j]),
                     ) - (b21_inter_ij + delta_b12u_intra));
             }
         }
-
         delta_a1u = density / state.temperature * delta_a1u * 2.0 * PI + delta_a1u_intra;
         state.moles.sum() * (delta_a1u + (-phi_x + 1.0) * delta * density)
     }
@@ -300,9 +300,7 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let prefac = t_recip.powi(3) * (1.0 / 3.0);
     let b_23 = prefac * c_mie * (a2 * m1 + a3 * m12 + a1);
 
-    let phi = (t_recip * 0.0208820673)
-        .tanh()
-        .powf(1.51646922);
+    let phi = (t_recip * 0.0208820673).tanh().powf(1.51646922);
 
     let par = [
         286.831547,
@@ -328,8 +326,7 @@ fn delta_b2_lj_chain<D: DualNum<f64> + Copy>(
     let a2 = m1 * par[9] + m12 * par[10] + m123 * par[11] + par[8];
     let a3 = m1 * par[13] + m12 * par[14] + m123 * par[15] + par[12];
 
-    let psi = -((t_recip * a1).exp() - 1.0) * a0
-        - ((t_recip * 2.0 * a3).exp() - 1.0) * a2;
+    let psi = -((t_recip * a1).exp() - 1.0) * a0 - ((t_recip * 2.0 * a3).exp() - 1.0) * a2;
 
     (b_21 + b_22 + b_23 + phi * psi / 6.0) * PI * m.powi(2) * sigma.powi(3)
 }
@@ -409,10 +406,17 @@ fn correlation_integral_and_b21_bh<D: DualNum<f64> + Copy>(
 fn u_fraction_bh_chain<D: DualNum<f64> + Copy>(m: D, reduced_density: D, reduced_beta: D) -> D {
     let m1 = (m - 1.0) / m;
     let m12 = m1 * (m - 2.0) / m;
-    let c1 = m1 * 0.21474970219148440 + m12 * 8.4559397335985956e-002 + 0.74157730394994559;
-    let c2 = m1 * 0.71684577296450291 + m12 * 2.0107795080641869e-002 + 0.14102431817992339;
-    let c3 = m1 * 0.21231582074821093 + m12 * 0.49161177623333113 + 2.3966433172179635;
-    let c4 = -m1 * 2.2021047225140755 + m12 * 0.57208989230294349 + 4.698403261064168;
+    // old
+    // let c1 = m1 * 0.21474970219148440 + m12 * 8.4559397335985956e-002 + 0.74157730394994559;
+    // let c2 = m1 * 0.71684577296450291 + m12 * 2.0107795080641869e-002 + 0.14102431817992339;
+    // let c3 = m1 * 0.21231582074821093 + m12 * 0.49161177623333113 + 2.3966433172179635;
+    // let c4 = -m1 * 2.2021047225140755 + m12 * 0.57208989230294349 + 4.698403261064168;
+
+    // new (11.07.2023)
+    let c1 = m1 * 0.21474970219148440 + m12 * 8.5778843117388259e-002 + 0.74157730394994559;
+    let c2 = m1 * 0.71684577296450291 + m12 * 2.1873075377140071e-002 + 0.14102431817992339;
+    let c3 = m1 * 0.21231582074821093 + m12 * 0.54998664928214569 + 2.3966433172179635;
+    let c4 = -m1 * 2.2021047225140755 + m12 * 0.41251049251352323 + 4.698403261064168;
     let activation = reduced_beta * c2.sqrt() / (reduced_beta.powi(2) * c2 + 1.0).sqrt();
     (activation * (-c1 + 1.0) + c1) * (reduced_density * c3 + reduced_density.powf(3.0) * c4).tanh()
 }

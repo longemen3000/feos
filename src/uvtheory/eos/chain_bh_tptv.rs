@@ -37,13 +37,17 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ChainBhTptv {
         let m = &p.m;
         let d = diameter_bh(p, state.temperature);
         let eta = packing_fraction(m, &state.partial_density, &d);
-        let zms = (-eta + 1.0).recip();
-        let zms2 = zms * zms;
+        let one_fluid_m = (x * m).sum();
+        let z0t = one_fluid_m * FRAC_PI_6;
+        let z1t = (x * m * &d).sum() * FRAC_PI_6;
         let z2t = (x * m * d.mapv(|di| di.powi(2))).sum() * FRAC_PI_6;
-        let z2 = state.partial_density.sum() * z2t;
+        let z3t = (x * m * d.mapv(|di| di.powi(3))).sum() * FRAC_PI_6;
 
         let mut a = D::zero();
-        let mut b2_tpt1 = D::zero();
+        let mut b2_tpt1 = one_fluid_m * (z1t * z2t * 3.0 / z0t + z3t);
+        // let mut b2_tpt1 = D::zero();
+        // dbg!(d[0].powi(3) * m[0] * FRAC_PI_6 * 4.0 * m[0]);
+        // dbg!(b2_tpt1);
         for i in 0..n {
             let (lny, dlny_drho_rho_zero) = lny_mspt(
                 state.partial_density.sum(),
@@ -54,13 +58,12 @@ impl<D: DualNum<f64> + Copy> HelmholtzEnergyDual<D> for ChainBhTptv {
                 d[i].recip() * p.sigma[i],
             );
             a += -x[i] * (m[i] - 1.0) * lny;
-            b2_tpt1 += -x[i] * (m[i] - 1.0) * dlny_drho_rho_zero + d[i].powi(3) * m[i] * FRAC_PI_6 * 4.0 * m[i] ;
+            b2_tpt1 += -x[i] * (m[i] - 1.0) * dlny_drho_rho_zero;
+            // b2_tpt1 += -x[i] * (m[i] - 1.0) * dlny_drho_rho_zero + d[i].powi(3) * m[i] * FRAC_PI_6 * 4.0 * m[i];
         }
-
-        let mbar_squared = (x * m).sum().powi(2);
+        let mbar_squared = one_fluid_m.powi(2);
         let m_activation =
             -(mbar_squared * 8.4803e-7 / (mbar_squared * 1.3235e-5 + 1.0)).sqrt() + 1.0;
-
         state.moles.sum()
             * (a + (b20_lj_chain(&self.parameters, x, state.temperature) - b2_tpt1)
                 * (-eta).exp()
@@ -84,7 +87,7 @@ fn lny_mspt<D: DualNum<f64> + Copy>(
 ) -> (D, D) {
     let mbar = (x * m).sum();
     let rho_s = density * mbar;
-    let x_s = (x * m).mapv(|e| e / mbar);
+    let x_s = (x * m).mapv(|xmi| xmi / mbar);
 
     let nu = rho_s * FRAC_PI_6 * (&x_s * d.mapv(|di| di.powi(3))).sum();
     let s = rho_s * PI * (&x_s * d.mapv(|di| di.powi(2))).sum();
